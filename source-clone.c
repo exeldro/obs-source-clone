@@ -112,13 +112,22 @@ void source_clone_defaults(obs_data_t *settings)
 	UNUSED_PARAMETER(settings);
 }
 
+bool source_clone_list_add_source(void *data, obs_source_t *source)
+{
+	obs_property_t *prop = data;
+	obs_property_list_add_string(prop, obs_source_get_name(source),
+				     obs_source_get_name(source));
+	return true;
+}
+
 obs_properties_t *source_clone_properties(void *data)
 {
 	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
-	obs_properties_add_list(props, "clone", "Clone",
-				OBS_COMBO_TYPE_EDITABLE,
-				OBS_COMBO_FORMAT_STRING);
+	obs_property_t *p = obs_properties_add_list(props, "clone", "Clone",
+						    OBS_COMBO_TYPE_EDITABLE,
+						    OBS_COMBO_FORMAT_STRING);
+	obs_enum_sources(source_clone_list_add_source, p);
 	return props;
 }
 
@@ -272,7 +281,6 @@ struct obs_source_info source_clone_info = {
 	.hide = source_clone_hide,
 	.get_defaults = source_clone_defaults,
 	.get_properties = source_clone_properties,
-	.icon_type = OBS_ICON_TYPE_MEDIA,
 };
 
 OBS_DECLARE_MODULE()
