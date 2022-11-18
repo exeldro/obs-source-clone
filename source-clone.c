@@ -56,6 +56,8 @@ static void source_clone_destroy(void *data)
 	if (source) {
 		obs_source_remove_audio_capture_callback(
 			source, source_clone_audio_callback, data);
+		if(obs_source_showing(context->source))
+			obs_source_dec_showing(source);
 		obs_source_release(source);
 	}
 	obs_weak_source_release(context->clone);
@@ -89,8 +91,6 @@ void source_clone_update(void *data, obs_data_t *settings)
 					source_clone_audio_callback, data);
 				if (obs_source_showing(context->source))
 					obs_source_dec_showing(prev_source);
-				if (obs_source_active(context->source))
-					obs_source_dec_active(prev_source);
 				obs_source_release(prev_source);
 			}
 			obs_weak_source_release(context->clone);
@@ -99,8 +99,6 @@ void source_clone_update(void *data, obs_data_t *settings)
 				source, source_clone_audio_callback, data);
 			if (obs_source_showing(context->source))
 				obs_source_inc_showing(source);
-			if (obs_source_active(context->source))
-				obs_source_inc_active(source);
 		}
 		obs_source_release(source);
 	}
@@ -175,29 +173,6 @@ uint32_t source_clone_get_height(void *data)
 	return height;
 }
 
-void source_clone_activate(void *data)
-{
-	struct source_clone *context = data;
-	if (!context->clone)
-		return;
-	obs_source_t *source = obs_weak_source_get_source(context->clone);
-	if (!source)
-		return;
-	obs_source_inc_active(source);
-	obs_source_release(source);
-}
-
-void source_clone_deactivate(void *data)
-{
-	struct source_clone *context = data;
-	if (!context->clone)
-		return;
-	obs_source_t *source = obs_weak_source_get_source(context->clone);
-	if (!source)
-		return;
-	obs_source_dec_active(source);
-	obs_source_release(source);
-}
 
 void source_clone_show(void *data)
 {
@@ -280,8 +255,6 @@ struct obs_source_info source_clone_info = {
 	.get_width = source_clone_get_width,
 	.get_height = source_clone_get_height,
 	.video_tick = source_clone_video_tick,
-	.activate = source_clone_activate,
-	.deactivate = source_clone_deactivate,
 	.show = source_clone_show,
 	.hide = source_clone_hide,
 	.get_defaults = source_clone_defaults,
