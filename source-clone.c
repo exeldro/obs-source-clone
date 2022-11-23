@@ -12,6 +12,15 @@ struct source_clone {
 	struct circlebuf audio_timestamps;
 	size_t num_channels;
 	pthread_mutex_t audio_mutex;
+	gs_texrender_t *render;
+	bool processed_frame;
+	bool audio_enabled;
+	uint8_t buffer_frame;
+	uint32_t cx;
+	uint32_t cy;
+	uint32_t source_cx;
+	uint32_t source_cy;
+	enum gs_color_space space;
 };
 
 const char *source_clone_get_name(void *type_data)
@@ -26,6 +35,8 @@ static void *source_clone_create(obs_data_t *settings, obs_source_t *source)
 	struct source_clone *context = bzalloc(sizeof(struct source_clone));
 	context->source = source;
 	pthread_mutex_init(&context->audio_mutex, NULL);
+	context->cx = 1;
+	context->cy = 1;
 	return context;
 }
 
@@ -56,7 +67,7 @@ static void source_clone_destroy(void *data)
 	if (source) {
 		obs_source_remove_audio_capture_callback(
 			source, source_clone_audio_callback, data);
-		if(obs_source_showing(context->source))
+		if (obs_source_showing(context->source))
 			obs_source_dec_showing(source);
 		obs_source_release(source);
 	}
@@ -66,6 +77,11 @@ static void source_clone_destroy(void *data)
 	}
 	circlebuf_free(&context->audio_frames);
 	circlebuf_free(&context->audio_timestamps);
+	if (context->render) {
+		obs_enter_graphics();
+		gs_texrender_destroy(context->render);
+		obs_leave_graphics();
+	}
 	pthread_mutex_destroy(&context->audio_mutex);
 	bfree(context);
 }
@@ -73,7 +89,7 @@ static void source_clone_destroy(void *data)
 void source_clone_update(void *data, obs_data_t *settings)
 {
 	struct source_clone *context = data;
-
+	bool audio_enabled = obs_data_get_bool(settings, "audio");
 	const char *source_name = obs_data_get_string(settings, "clone");
 	obs_source_t *source = obs_get_source_by_name(source_name);
 	if (source == context->source) {
@@ -82,7 +98,8 @@ void source_clone_update(void *data, obs_data_t *settings)
 	}
 	if (source) {
 		if (!obs_weak_source_references_source(context->clone,
-						       source)) {
+						       source) ||
+		    context->audio_enabled != audio_enabled) {
 			obs_source_t *prev_source =
 				obs_weak_source_get_source(context->clone);
 			if (prev_source) {
@@ -95,29 +112,36 @@ void source_clone_update(void *data, obs_data_t *settings)
 			}
 			obs_weak_source_release(context->clone);
 			context->clone = obs_source_get_weak_source(source);
-			obs_source_add_audio_capture_callback(
-				source, source_clone_audio_callback, data);
+			if (audio_enabled)
+				obs_source_add_audio_capture_callback(
+					source, source_clone_audio_callback,
+					data);
 			if (obs_source_showing(context->source))
 				obs_source_inc_showing(source);
 		}
 		obs_source_release(source);
 	}
+	context->audio_enabled = audio_enabled;
 	context->num_channels = audio_output_get_channels(obs_get_audio());
+	context->buffer_frame =
+		(uint8_t)obs_data_get_int(settings, "buffer_frame");
 }
 
 void source_clone_defaults(obs_data_t *settings)
 {
 	UNUSED_PARAMETER(settings);
+	obs_data_set_default_bool(settings, "audio", true);
 }
 
 bool source_clone_list_add_source(void *data, obs_source_t *source)
 {
 	obs_property_t *prop = data;
 
-	const char * name = obs_source_get_name(source);
+	const char *name = obs_source_get_name(source);
 	size_t count = obs_property_list_item_count(prop);
 	size_t idx = 0;
-	while(idx < count && strcmp(name, obs_property_list_item_string(prop, idx)) > 0)
+	while (idx < count &&
+	       strcmp(name, obs_property_list_item_string(prop, idx)) > 0)
 		idx++;
 	obs_property_list_insert_string(prop, idx, name, name);
 	return true;
@@ -127,11 +151,93 @@ obs_properties_t *source_clone_properties(void *data)
 {
 	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
-	obs_property_t *p = obs_properties_add_list(props, "clone", "Clone",
+	obs_property_t *p = obs_properties_add_list(props, "clone",
+						    obs_module_text("Clone"),
 						    OBS_COMBO_TYPE_EDITABLE,
 						    OBS_COMBO_FORMAT_STRING);
 	obs_enum_sources(source_clone_list_add_source, p);
+	obs_properties_add_bool(props, "audio", obs_module_text("Audio"));
+	p = obs_properties_add_list(props, "buffer_frame", "VideoBuffer",
+				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("None"), 0);
+	obs_property_list_add_int(p, obs_module_text("Full"), 1);
+	obs_property_list_add_int(p, obs_module_text("Half"), 2);
+	obs_property_list_add_int(p, obs_module_text("Third"), 3);
+	obs_property_list_add_int(p, obs_module_text("Quarter"), 4);
 	return props;
+}
+
+static const char *
+get_tech_name_and_multiplier(enum gs_color_space current_space,
+			     enum gs_color_space source_space,
+			     float *multiplier)
+{
+	const char *tech_name = "Draw";
+	*multiplier = 1.f;
+
+	switch (source_space) {
+	case GS_CS_SRGB:
+	case GS_CS_SRGB_16F:
+		switch (current_space) {
+		case GS_CS_709_SCRGB:
+			tech_name = "DrawMultiply";
+			*multiplier = obs_get_video_sdr_white_level() / 80.0f;
+		default:;
+		}
+		break;
+	case GS_CS_709_EXTENDED:
+		switch (current_space) {
+		case GS_CS_SRGB:
+		case GS_CS_SRGB_16F:
+			tech_name = "DrawTonemap";
+			break;
+		case GS_CS_709_SCRGB:
+			tech_name = "DrawMultiply";
+			*multiplier = obs_get_video_sdr_white_level() / 80.0f;
+		default:;
+		}
+		break;
+	case GS_CS_709_SCRGB:
+		switch (current_space) {
+		case GS_CS_SRGB:
+		case GS_CS_SRGB_16F:
+			tech_name = "DrawMultiplyTonemap";
+			*multiplier = 80.0f / obs_get_video_sdr_white_level();
+			break;
+		case GS_CS_709_EXTENDED:
+			tech_name = "DrawMultiply";
+			*multiplier = 80.0f / obs_get_video_sdr_white_level();
+		default:;
+		}
+	}
+
+	return tech_name;
+}
+
+static void source_clone_draw_frame(struct source_clone *context)
+{
+
+	const enum gs_color_space current_space = gs_get_color_space();
+	float multiplier;
+	const char *technique = get_tech_name_and_multiplier(
+		current_space, context->space, &multiplier);
+
+	gs_effect_t *effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+	gs_texture_t *tex = gs_texrender_get_texture(context->render);
+	if (!tex)
+		return;
+	const bool previous = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(true);
+
+	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(effect, "image"),
+				   tex);
+	gs_effect_set_float(gs_effect_get_param_by_name(effect, "multiplier"),
+			    multiplier);
+
+	while (gs_effect_loop(effect, technique))
+		gs_draw_sprite(tex, 0, context->cx, context->cy);
+
+	gs_enable_framebuffer_srgb(previous);
 }
 
 void source_clone_video_render(void *data, gs_effect_t *effect)
@@ -140,11 +246,73 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 	struct source_clone *context = data;
 	if (!context->clone)
 		return;
+
+	if (context->buffer_frame > 0 && context->processed_frame) {
+		source_clone_draw_frame(context);
+		return;
+	}
 	obs_source_t *source = obs_weak_source_get_source(context->clone);
 	if (!source)
 		return;
-	obs_source_video_render(source);
-	obs_source_release(source);
+	const uint32_t source_flags = obs_source_get_output_flags(source);
+	const bool custom_draw = (source_flags & OBS_SOURCE_CUSTOM_DRAW) != 0;
+	const bool async = (source_flags & OBS_SOURCE_ASYNC) != 0;
+	const bool video = (source_flags & OBS_SOURCE_VIDEO) != 0;
+	if (context->buffer_frame == 0) {
+		if (!custom_draw && !async && video)
+			obs_source_default_render(source);
+		else if (video)
+			obs_source_video_render(source);
+		obs_source_release(source);
+		return;
+	}
+
+	if (!context->source_cx || !context->source_cy)
+		return;
+
+	const enum gs_color_space preferred_spaces[] = {
+		GS_CS_SRGB,
+		GS_CS_SRGB_16F,
+		GS_CS_709_EXTENDED,
+	};
+	const enum gs_color_space space = obs_source_get_color_space(
+		source, OBS_COUNTOF(preferred_spaces), preferred_spaces);
+	const enum gs_color_format format = gs_get_format_from_space(space);
+	if (!context->render ||
+	    gs_texrender_get_format(context->render) != format) {
+		gs_texrender_destroy(context->render);
+		context->render = gs_texrender_create(format, GS_ZS_NONE);
+	} else {
+		gs_texrender_reset(context->render);
+	}
+
+	gs_blend_state_push();
+	gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+	if (gs_texrender_begin_with_color_space(context->render, context->cx,
+						context->cy, space)) {
+
+		struct vec4 clear_color;
+
+		vec4_zero(&clear_color);
+		gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
+		if (context->source_cx && context->source_cy && video) {
+			gs_ortho(0.0f, (float)context->source_cx, 0.0f,
+				 (float)context->source_cy, -100.0f, 100.0f);
+
+			if (!custom_draw && !async)
+				obs_source_default_render(source);
+			else
+				obs_source_video_render(source);
+		}
+		gs_texrender_end(context->render);
+
+		context->space = space;
+	}
+
+	gs_blend_state_pop();
+
+	context->processed_frame = true;
+	source_clone_draw_frame(context);
 }
 
 uint32_t source_clone_get_width(void *data)
@@ -152,11 +320,15 @@ uint32_t source_clone_get_width(void *data)
 	struct source_clone *context = data;
 	if (!context->clone)
 		return 1;
+	if (context->buffer_frame > 0)
+		return context->cx;
 	obs_source_t *source = obs_weak_source_get_source(context->clone);
 	if (!source)
 		return 1;
-	const uint32_t width = obs_source_get_width(source);
+	uint32_t width = obs_source_get_width(source);
 	obs_source_release(source);
+	if (context->buffer_frame > 1)
+		width /= context->buffer_frame;
 	return width;
 }
 
@@ -165,14 +337,17 @@ uint32_t source_clone_get_height(void *data)
 	struct source_clone *context = data;
 	if (!context->clone)
 		return 1;
+	if (context->buffer_frame > 0)
+		return context->cy;
 	obs_source_t *source = obs_weak_source_get_source(context->clone);
 	if (!source)
 		return 1;
-	const uint32_t height = obs_source_get_height(source);
+	uint32_t height = obs_source_get_height(source);
 	obs_source_release(source);
+	if (context->buffer_frame > 1)
+		height /= context->buffer_frame;
 	return height;
 }
-
 
 void source_clone_show(void *data)
 {
@@ -214,6 +389,36 @@ void source_clone_video_tick(void *data, float seconds)
 {
 	UNUSED_PARAMETER(seconds);
 	struct source_clone *context = data;
+	context->processed_frame = false;
+	if (context->buffer_frame > 0) {
+		uint32_t cx = context->buffer_frame;
+		uint32_t cy = context->buffer_frame;
+		if (context->clone) {
+			obs_source_t *s =
+				obs_weak_source_get_source(context->clone);
+			if (s) {
+				context->source_cx = obs_source_get_width(s);
+				context->source_cy = obs_source_get_height(s);
+				cx = context->source_cx;
+				cy = context->source_cy;
+				obs_source_release(s);
+			}
+		}
+		if (context->buffer_frame > 1) {
+			cx /= context->buffer_frame;
+			cy /= context->buffer_frame;
+		}
+		if (cx != context->cx || cy != context->cy) {
+			context->cx = cx;
+			context->cy = cy;
+			obs_enter_graphics();
+			gs_texrender_destroy(context->render);
+			context->render = NULL;
+			obs_leave_graphics();
+		}
+	}
+	if (!context->audio_enabled)
+		return;
 	const audio_t *a = obs_get_audio();
 	const struct audio_output_info *aoi = audio_output_get_info(a);
 	pthread_mutex_lock(&context->audio_mutex);

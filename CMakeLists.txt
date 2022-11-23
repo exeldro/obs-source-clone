@@ -6,7 +6,7 @@ else()
   cmake_minimum_required(VERSION 3.18)
 endif()
 
-project(source-clone VERSION 0.0.1)
+project(source-clone VERSION 0.1.0)
 set(PROJECT_FULL_NAME "Source Clone")
 
 # Set new UUIDs when you start to create a new plugin.
