@@ -156,6 +156,7 @@ obs_properties_t *source_clone_properties(void *data)
 						    OBS_COMBO_TYPE_EDITABLE,
 						    OBS_COMBO_FORMAT_STRING);
 	obs_enum_sources(source_clone_list_add_source, p);
+	obs_enum_scenes(source_clone_list_add_source, p);
 	obs_properties_add_bool(props, "audio", obs_module_text("Audio"));
 	p = obs_properties_add_list(props, "buffer_frame", "VideoBuffer",
 				    OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
