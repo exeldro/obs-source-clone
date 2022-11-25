@@ -158,6 +158,14 @@ obs_properties_t *source_clone_properties(void *data)
 						    OBS_COMBO_FORMAT_STRING);
 	obs_enum_sources(source_clone_list_add_source, p);
 	obs_enum_scenes(source_clone_list_add_source, p);
+	//add global audio sources
+	for (uint32_t i = 1; i < 7; i++) {
+		obs_source_t *s = obs_get_output_source(i);
+		if (!s)
+			continue;
+		source_clone_list_add_source(p, s);
+		obs_source_release(s);
+	}
 	obs_properties_add_bool(props, "audio", obs_module_text("Audio"));
 	p = obs_properties_add_list(props, "buffer_frame",
 				    obs_module_text("VideoBuffer"),
