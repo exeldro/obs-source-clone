@@ -61,11 +61,37 @@ void source_clone_audio_callback(void *data, obs_source_t *source,
 	pthread_mutex_unlock(&context->audio_mutex);
 }
 
+void source_clone_audio_activate(void *data, calldata_t *calldata)
+{
+	struct source_clone *context = data;
+	obs_source_t *source = calldata_ptr(calldata, "source");
+	if (context->audio_enabled && context->clone &&
+	    obs_weak_source_references_source(context->clone, source)) {
+		obs_source_set_audio_active(context->source, true);
+	}
+}
+
+void source_clone_audio_deactivate(void *data, calldata_t *calldata)
+{
+	struct source_clone *context = data;
+	obs_source_t *source = calldata_ptr(calldata, "source");
+	if (context->clone &&
+	    obs_weak_source_references_source(context->clone, source)) {
+		obs_source_set_audio_active(context->source, false);
+	}
+}
+
 static void source_clone_destroy(void *data)
 {
 	struct source_clone *context = data;
 	obs_source_t *source = obs_weak_source_get_source(context->clone);
 	if (source) {
+		signal_handler_t *sh = obs_source_get_signal_handler(source);
+		signal_handler_disconnect(sh, "audio_activate",
+					  source_clone_audio_activate, data);
+		signal_handler_disconnect(sh, "audio_deactivate",
+					  source_clone_audio_deactivate, data);
+
 		obs_source_remove_audio_capture_callback(
 			source, source_clone_audio_callback, data);
 		if (obs_source_showing(context->source))
@@ -104,6 +130,15 @@ void source_clone_update(void *data, obs_data_t *settings)
 			obs_source_t *prev_source =
 				obs_weak_source_get_source(context->clone);
 			if (prev_source) {
+				signal_handler_t *sh =
+					obs_source_get_signal_handler(
+						prev_source);
+				signal_handler_disconnect(
+					sh, "audio_activate",
+					source_clone_audio_activate, data);
+				signal_handler_disconnect(
+					sh, "audio_deactivate",
+					source_clone_audio_deactivate, data);
 				obs_source_remove_audio_capture_callback(
 					prev_source,
 					source_clone_audio_callback, data);
@@ -113,10 +148,27 @@ void source_clone_update(void *data, obs_data_t *settings)
 			}
 			obs_weak_source_release(context->clone);
 			context->clone = obs_source_get_weak_source(source);
-			if (audio_enabled)
+			if (audio_enabled &&
+			    (obs_source_get_output_flags(source) &
+			     OBS_SOURCE_AUDIO) != 0) {
 				obs_source_add_audio_capture_callback(
 					source, source_clone_audio_callback,
 					data);
+				obs_source_set_audio_active(
+					context->source,
+					obs_source_audio_active(source));
+				signal_handler_t *sh =
+					obs_source_get_signal_handler(source);
+				signal_handler_connect(
+					sh, "audio_activate",
+					source_clone_audio_activate, data);
+				signal_handler_connect(
+					sh, "audio_deactivate",
+					source_clone_audio_deactivate, data);
+			} else {
+				obs_source_set_audio_active(context->source,
+							    false);
+			}
 			if (obs_source_showing(context->source))
 				obs_source_inc_showing(source);
 		}
