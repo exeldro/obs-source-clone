@@ -21,6 +21,7 @@ struct source_clone {
 	uint32_t source_cx;
 	uint32_t source_cy;
 	enum gs_color_space space;
+	bool rendering;
 };
 
 const char *source_clone_get_name(void *type_data)
@@ -252,9 +253,14 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 		source_clone_draw_frame(context);
 		return;
 	}
-	obs_source_t *source = obs_weak_source_get_source(context->clone);
-	if (!source)
+	if(context->rendering)
 		return;
+	context->rendering = true;
+	obs_source_t *source = obs_weak_source_get_source(context->clone);
+	if (!source){
+		context->rendering = false;
+		return;
+	}
 	const uint32_t source_flags = obs_source_get_output_flags(source);
 	const bool custom_draw = (source_flags & OBS_SOURCE_CUSTOM_DRAW) != 0;
 	const bool async = (source_flags & OBS_SOURCE_ASYNC) != 0;
@@ -265,11 +271,15 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 		else if (video)
 			obs_source_video_render(source);
 		obs_source_release(source);
+		context->rendering = false;
 		return;
 	}
 
-	if (!context->source_cx || !context->source_cy)
+	if (!context->source_cx || !context->source_cy){
+		obs_source_release(source);
+		context->rendering = false;
 		return;
+	}
 
 	const enum gs_color_space preferred_spaces[] = {
 		GS_CS_SRGB,
@@ -313,6 +323,8 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 	gs_blend_state_pop();
 
 	context->processed_frame = true;
+	obs_source_release(source);
+	context->rendering = false;
 	source_clone_draw_frame(context);
 }
 
