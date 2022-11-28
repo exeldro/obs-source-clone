@@ -22,6 +22,7 @@ struct source_clone {
 	uint32_t source_cy;
 	enum gs_color_space space;
 	bool rendering;
+	bool active_clone;
 };
 
 const char *source_clone_get_name(void *type_data)
@@ -91,11 +92,12 @@ static void source_clone_destroy(void *data)
 					  source_clone_audio_activate, data);
 		signal_handler_disconnect(sh, "audio_deactivate",
 					  source_clone_audio_deactivate, data);
-
 		obs_source_remove_audio_capture_callback(
 			source, source_clone_audio_callback, data);
 		if (obs_source_showing(context->source))
 			obs_source_dec_showing(source);
+		if (context->active_clone && obs_source_active(context->source))
+			obs_source_dec_active(source);
 		obs_source_release(source);
 	}
 	obs_weak_source_release(context->clone);
@@ -117,6 +119,7 @@ void source_clone_update(void *data, obs_data_t *settings)
 {
 	struct source_clone *context = data;
 	bool audio_enabled = obs_data_get_bool(settings, "audio");
+	bool active_clone = obs_data_get_bool(settings, "active_clone");
 	const char *source_name = obs_data_get_string(settings, "clone");
 	obs_source_t *source = obs_get_source_by_name(source_name);
 	if (source == context->source) {
@@ -126,7 +129,8 @@ void source_clone_update(void *data, obs_data_t *settings)
 	if (source) {
 		if (!obs_weak_source_references_source(context->clone,
 						       source) ||
-		    context->audio_enabled != audio_enabled) {
+		    context->audio_enabled != audio_enabled ||
+		    context->active_clone != active_clone) {
 			obs_source_t *prev_source =
 				obs_weak_source_get_source(context->clone);
 			if (prev_source) {
@@ -144,6 +148,9 @@ void source_clone_update(void *data, obs_data_t *settings)
 					source_clone_audio_callback, data);
 				if (obs_source_showing(context->source))
 					obs_source_dec_showing(prev_source);
+				if (context->active_clone &&
+				    obs_source_active(context->source))
+					obs_source_dec_active(source);
 				obs_source_release(prev_source);
 			}
 			obs_weak_source_release(context->clone);
@@ -171,10 +178,13 @@ void source_clone_update(void *data, obs_data_t *settings)
 			}
 			if (obs_source_showing(context->source))
 				obs_source_inc_showing(source);
+			if (active_clone && obs_source_active(context->source))
+				obs_source_inc_active(source);
 		}
 		obs_source_release(source);
 	}
 	context->audio_enabled = audio_enabled;
+	context->active_clone = active_clone;
 	context->num_channels = audio_output_get_channels(obs_get_audio());
 	context->buffer_frame =
 		(uint8_t)obs_data_get_int(settings, "buffer_frame");
@@ -227,6 +237,9 @@ obs_properties_t *source_clone_properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("Half"), 2);
 	obs_property_list_add_int(p, obs_module_text("Third"), 3);
 	obs_property_list_add_int(p, obs_module_text("Quarter"), 4);
+
+	obs_properties_add_bool(props, "active_clone",
+				obs_module_text("ActiveClone"));
 
 	obs_properties_add_text(
 		props, "plugin_info",
@@ -453,6 +466,30 @@ void source_clone_hide(void *data)
 	obs_source_release(source);
 }
 
+void source_clone_activate(void *data)
+{
+	struct source_clone *context = data;
+	if (!context->clone || !context->active_clone)
+		return;
+	obs_source_t *source = obs_weak_source_get_source(context->clone);
+	if (!source)
+		return;
+	obs_source_inc_active(source);
+	obs_source_release(source);
+}
+
+void source_clone_deactivate(void *data)
+{
+	struct source_clone *context = data;
+	if (!context->clone || !context->active_clone)
+		return;
+	obs_source_t *source = obs_weak_source_get_source(context->clone);
+	if (!source)
+		return;
+	obs_source_dec_active(source);
+	obs_source_release(source);
+}
+
 void source_clone_save(void *data, obs_data_t *settings)
 {
 	struct source_clone *context = data;
@@ -542,6 +579,8 @@ struct obs_source_info source_clone_info = {
 	.video_tick = source_clone_video_tick,
 	.show = source_clone_show,
 	.hide = source_clone_hide,
+	.activate = source_clone_activate,
+	.deactivate = source_clone_deactivate,
 	.get_defaults = source_clone_defaults,
 	.get_properties = source_clone_properties,
 };
