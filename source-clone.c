@@ -1,29 +1,7 @@
 #include "source-clone.h"
+#include "audio-wrapper.h"
 #include <obs-module.h>
 
-#include <util/threading.h>
-#include <util/circlebuf.h>
-
-struct source_clone {
-	obs_source_t *source;
-	obs_weak_source_t *clone;
-	struct circlebuf audio_data[MAX_AUDIO_CHANNELS];
-	struct circlebuf audio_frames;
-	struct circlebuf audio_timestamps;
-	size_t num_channels;
-	pthread_mutex_t audio_mutex;
-	gs_texrender_t *render;
-	bool processed_frame;
-	bool audio_enabled;
-	uint8_t buffer_frame;
-	uint32_t cx;
-	uint32_t cy;
-	uint32_t source_cx;
-	uint32_t source_cy;
-	enum gs_color_space space;
-	bool rendering;
-	bool active_clone;
-};
 
 const char *source_clone_get_name(void *type_data)
 {
@@ -85,6 +63,10 @@ void source_clone_audio_deactivate(void *data, calldata_t *calldata)
 static void source_clone_destroy(void *data)
 {
 	struct source_clone *context = data;
+	if (context->audio_wrapper) {
+		audio_wrapper_remove(context->audio_wrapper, context);
+		context->audio_wrapper = NULL;
+	}
 	obs_source_t *source = obs_weak_source_get_source(context->clone);
 	if (source) {
 		signal_handler_t *sh = obs_source_get_signal_handler(source);
@@ -131,6 +113,11 @@ void source_clone_update(void *data, obs_data_t *settings)
 						       source) ||
 		    context->audio_enabled != audio_enabled ||
 		    context->active_clone != active_clone) {
+			if (context->audio_wrapper) {
+				audio_wrapper_remove(context->audio_wrapper,
+						     context);
+				context->audio_wrapper = NULL;
+			}
 			obs_source_t *prev_source =
 				obs_weak_source_get_source(context->clone);
 			if (prev_source) {
@@ -155,23 +142,43 @@ void source_clone_update(void *data, obs_data_t *settings)
 			}
 			obs_weak_source_release(context->clone);
 			context->clone = obs_source_get_weak_source(source);
-			if (audio_enabled &&
-			    (obs_source_get_output_flags(source) &
-			     OBS_SOURCE_AUDIO) != 0) {
-				obs_source_add_audio_capture_callback(
-					source, source_clone_audio_callback,
-					data);
-				obs_source_set_audio_active(
-					context->source,
-					obs_source_audio_active(source));
-				signal_handler_t *sh =
-					obs_source_get_signal_handler(source);
-				signal_handler_connect(
-					sh, "audio_activate",
-					source_clone_audio_activate, data);
-				signal_handler_connect(
-					sh, "audio_deactivate",
-					source_clone_audio_deactivate, data);
+			if (audio_enabled) {
+				uint32_t flags =
+					obs_source_get_output_flags(source);
+				if ((flags & OBS_SOURCE_AUDIO) != 0) {
+					obs_source_add_audio_capture_callback(
+						source,
+						source_clone_audio_callback,
+						data);
+
+					obs_source_set_audio_active(
+						context->source,
+						obs_source_audio_active(
+							source));
+					signal_handler_t *sh =
+						obs_source_get_signal_handler(
+							source);
+					signal_handler_connect(
+						sh, "audio_activate",
+						source_clone_audio_activate,
+						data);
+					signal_handler_connect(
+						sh, "audio_deactivate",
+						source_clone_audio_deactivate,
+						data);
+				} else if ((flags & OBS_SOURCE_COMPOSITE) !=
+					   0) {
+					context->audio_wrapper =
+						audio_wrapper_get(true);
+					audio_wrapper_add(
+						context->audio_wrapper,
+						context);
+					obs_source_set_audio_active(
+						context->source, true);
+				} else {
+					obs_source_set_audio_active(
+						context->source, false);
+				}
 			} else {
 				obs_source_set_audio_active(context->source,
 							    false);
@@ -536,8 +543,11 @@ void source_clone_video_tick(void *data, float seconds)
 	}
 	if (!context->audio_enabled)
 		return;
+
+
 	const audio_t *a = obs_get_audio();
 	const struct audio_output_info *aoi = audio_output_get_info(a);
+
 	pthread_mutex_lock(&context->audio_mutex);
 	while (context->audio_frames.size > 0) {
 		struct obs_source_audio audio;
@@ -602,5 +612,6 @@ bool obs_module_load(void)
 {
 	blog(LOG_INFO, "[Source Clone] loaded version %s", PROJECT_VERSION);
 	obs_register_source(&source_clone_info);
+	obs_register_source(&audio_wrapper_source);
 	return true;
 }

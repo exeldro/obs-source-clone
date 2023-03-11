@@ -6,7 +6,7 @@ else()
   cmake_minimum_required(VERSION 3.18)
 endif()
 
-project(source-clone VERSION 0.1.1)
+project(source-clone VERSION 0.1.2)
 set(PROJECT_FULL_NAME "Source Clone")
 
 # Set new UUIDs when you start to create a new plugin.
@@ -19,7 +19,9 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_D
 
 target_sources(${PROJECT_NAME} PRIVATE
 	source-clone.c
+	audio-wrapper.c
 	source-clone.h
+	audio-wrapper.h
 	version.h)
 
 if(BUILD_OUT_OF_TREE)
