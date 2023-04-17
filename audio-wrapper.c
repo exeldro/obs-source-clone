@@ -89,6 +89,11 @@ void *audio_wrapper_create(obs_data_t *settings, obs_source_t *source)
 void audio_wrapper_destroy(void *data)
 {
 	struct audio_wrapper_info *aw = (struct audio_wrapper_info *)data;
+	for (size_t i = 0; i < aw->clones.num; i++) {
+		struct source_clone *clone = aw->clones.array[i];
+		if (clone->audio_wrapper == aw)
+			clone->audio_wrapper = NULL;
+	}
 	da_free(aw->clones);
 	bfree(data);
 }
