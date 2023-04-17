@@ -5,9 +5,17 @@
 #include <util/threading.h>
 #include <util/circlebuf.h>
 
+enum clone_type {
+	CLONE_SOURCE,
+	CLONE_CURRENT_SCENE,
+	CLONE_PREVIOUS_SCENE,
+};
+
 struct source_clone {
 	obs_source_t *source;
+	enum clone_type clone_type;
 	obs_weak_source_t *clone;
+	obs_weak_source_t *current_scene;
 	struct audio_wrapper_info *audio_wrapper;
 	struct circlebuf audio_data[MAX_AUDIO_CHANNELS];
 	struct circlebuf audio_frames;

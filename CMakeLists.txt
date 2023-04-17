@@ -26,7 +26,11 @@ target_sources(${PROJECT_NAME} PRIVATE
 
 if(BUILD_OUT_OF_TREE)
 	find_package(libobs REQUIRED)
+	find_package(obs-frontend-api REQUIRED)
 	include(cmake/ObsPluginHelpers.cmake)
+	set(OBS_FRONTEND_API_NAME "obs-frontend-api")
+else()
+	set(OBS_FRONTEND_API_NAME "frontend-api")
 endif()
   
 if(OS_WINDOWS)
@@ -54,6 +58,7 @@ elseif(OS_MACOS)
 endif()
 
 target_link_libraries(${PROJECT_NAME}
+	OBS::${OBS_FRONTEND_API_NAME}
 	OBS::libobs)
 
 if(BUILD_OUT_OF_TREE)
@@ -69,6 +74,8 @@ if(BUILD_OUT_OF_TREE)
     install(DIRECTORY data/locale
         DESTINATION ${CMAKE_INSTALL_PREFIX}/${DATA_OUT_DIR})
 else()
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        "${CMAKE_SOURCE_DIR}/UI/obs-frontend-api")
     set_target_properties(${PROJECT_NAME} PROPERTIES FOLDER "plugins/exeldro")
 endif()
 setup_plugin_target(${PROJECT_NAME})
