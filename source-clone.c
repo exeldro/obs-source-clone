@@ -1,7 +1,7 @@
 #include "source-clone.h"
 #include "audio-wrapper.h"
 #include <obs-module.h>
-
+#include <obs-frontend-api.h>
 
 const char *source_clone_get_name(void *type_data)
 {
@@ -83,6 +83,7 @@ static void source_clone_destroy(void *data)
 		obs_source_release(source);
 	}
 	obs_weak_source_release(context->clone);
+	obs_weak_source_release(context->current_scene);
 	for (size_t i = 0; i < MAX_AUDIO_CHANNELS; i++) {
 		circlebuf_free(&context->audio_data[i]);
 	}
@@ -97,98 +98,90 @@ static void source_clone_destroy(void *data)
 	bfree(context);
 }
 
+void source_clone_switch_source(struct source_clone *context,
+				obs_source_t *source)
+{
+	if (context->audio_wrapper) {
+		audio_wrapper_remove(context->audio_wrapper, context);
+		context->audio_wrapper = NULL;
+	}
+	obs_source_t *prev_source = obs_weak_source_get_source(context->clone);
+	if (prev_source) {
+		signal_handler_t *sh =
+			obs_source_get_signal_handler(prev_source);
+		signal_handler_disconnect(sh, "audio_activate",
+					  source_clone_audio_activate, context);
+		signal_handler_disconnect(sh, "audio_deactivate",
+					  source_clone_audio_deactivate,
+					  context);
+		obs_source_remove_audio_capture_callback(
+			prev_source, source_clone_audio_callback, context);
+		if (obs_source_showing(context->source))
+			obs_source_dec_showing(prev_source);
+		if (context->active_clone && obs_source_active(context->source))
+			obs_source_dec_active(source);
+		obs_source_release(prev_source);
+	}
+	obs_weak_source_release(context->clone);
+	context->clone = obs_source_get_weak_source(source);
+	if (context->audio_enabled) {
+		uint32_t flags = obs_source_get_output_flags(source);
+		if ((flags & OBS_SOURCE_AUDIO) != 0) {
+			obs_source_add_audio_capture_callback(
+				source, source_clone_audio_callback, context);
+
+			obs_source_set_audio_active(
+				context->source,
+				obs_source_audio_active(source));
+			signal_handler_t *sh =
+				obs_source_get_signal_handler(source);
+			signal_handler_connect(sh, "audio_activate",
+					       source_clone_audio_activate,
+					       context);
+			signal_handler_connect(sh, "audio_deactivate",
+					       source_clone_audio_deactivate,
+					       context);
+		} else if ((flags & OBS_SOURCE_COMPOSITE) != 0) {
+			context->audio_wrapper = audio_wrapper_get(true);
+			audio_wrapper_add(context->audio_wrapper, context);
+			obs_source_set_audio_active(context->source, true);
+		} else {
+			obs_source_set_audio_active(context->source, false);
+		}
+	} else {
+		obs_source_set_audio_active(context->source, false);
+	}
+	if (obs_source_showing(context->source))
+		obs_source_inc_showing(source);
+	if (context->active_clone && obs_source_active(context->source))
+		obs_source_inc_active(source);
+}
+
 void source_clone_update(void *data, obs_data_t *settings)
 {
 	struct source_clone *context = data;
 	bool audio_enabled = obs_data_get_bool(settings, "audio");
 	bool active_clone = obs_data_get_bool(settings, "active_clone");
-	const char *source_name = obs_data_get_string(settings, "clone");
-	obs_source_t *source = obs_get_source_by_name(source_name);
-	if (source == context->source) {
-		obs_source_release(source);
-		source = NULL;
-	}
-	if (source) {
-		if (!obs_weak_source_references_source(context->clone,
-						       source) ||
-		    context->audio_enabled != audio_enabled ||
-		    context->active_clone != active_clone) {
-			if (context->audio_wrapper) {
-				audio_wrapper_remove(context->audio_wrapper,
-						     context);
-				context->audio_wrapper = NULL;
-			}
-			obs_source_t *prev_source =
-				obs_weak_source_get_source(context->clone);
-			if (prev_source) {
-				signal_handler_t *sh =
-					obs_source_get_signal_handler(
-						prev_source);
-				signal_handler_disconnect(
-					sh, "audio_activate",
-					source_clone_audio_activate, data);
-				signal_handler_disconnect(
-					sh, "audio_deactivate",
-					source_clone_audio_deactivate, data);
-				obs_source_remove_audio_capture_callback(
-					prev_source,
-					source_clone_audio_callback, data);
-				if (obs_source_showing(context->source))
-					obs_source_dec_showing(prev_source);
-				if (context->active_clone &&
-				    obs_source_active(context->source))
-					obs_source_dec_active(source);
-				obs_source_release(prev_source);
-			}
-			obs_weak_source_release(context->clone);
-			context->clone = obs_source_get_weak_source(source);
-			if (audio_enabled) {
-				uint32_t flags =
-					obs_source_get_output_flags(source);
-				if ((flags & OBS_SOURCE_AUDIO) != 0) {
-					obs_source_add_audio_capture_callback(
-						source,
-						source_clone_audio_callback,
-						data);
-
-					obs_source_set_audio_active(
-						context->source,
-						obs_source_audio_active(
-							source));
-					signal_handler_t *sh =
-						obs_source_get_signal_handler(
-							source);
-					signal_handler_connect(
-						sh, "audio_activate",
-						source_clone_audio_activate,
-						data);
-					signal_handler_connect(
-						sh, "audio_deactivate",
-						source_clone_audio_deactivate,
-						data);
-				} else if ((flags & OBS_SOURCE_COMPOSITE) !=
-					   0) {
-					context->audio_wrapper =
-						audio_wrapper_get(true);
-					audio_wrapper_add(
-						context->audio_wrapper,
-						context);
-					obs_source_set_audio_active(
-						context->source, true);
-				} else {
-					obs_source_set_audio_active(
-						context->source, false);
-				}
-			} else {
-				obs_source_set_audio_active(context->source,
-							    false);
-			}
-			if (obs_source_showing(context->source))
-				obs_source_inc_showing(source);
-			if (active_clone && obs_source_active(context->source))
-				obs_source_inc_active(source);
+	context->clone_type = obs_data_get_int(settings, "clone_type");
+	if (context->clone_type == CLONE_SOURCE) {
+		const char *source_name =
+			obs_data_get_string(settings, "clone");
+		obs_source_t *source = obs_get_source_by_name(source_name);
+		if (source == context->source) {
+			obs_source_release(source);
+			source = NULL;
 		}
-		obs_source_release(source);
+		if (source) {
+			if (!obs_weak_source_references_source(context->clone,
+							       source) ||
+			    context->audio_enabled != audio_enabled ||
+			    context->active_clone != active_clone) {
+				context->audio_enabled = audio_enabled;
+				context->active_clone = active_clone;
+				source_clone_switch_source(context, source);
+			}
+			obs_source_release(source);
+		}
 	}
 	context->audio_enabled = audio_enabled;
 	context->active_clone = active_clone;
@@ -217,16 +210,38 @@ bool source_clone_list_add_source(void *data, obs_source_t *source)
 	return true;
 }
 
+bool source_clone_type_changed(void *priv, obs_properties_t *props,
+			       obs_property_t *property, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(priv);
+	UNUSED_PARAMETER(property);
+	obs_property_t *clone = obs_properties_get(props, "clone");
+	obs_property_set_visible(clone,
+				 obs_data_get_int(settings, "clone_type") ==
+					 CLONE_SOURCE);
+	return true;
+}
+
 obs_properties_t *source_clone_properties(void *data)
 {
-	UNUSED_PARAMETER(data);
 	obs_properties_t *props = obs_properties_create();
-	obs_property_t *p = obs_properties_add_list(props, "clone",
-						    obs_module_text("Clone"),
-						    OBS_COMBO_TYPE_EDITABLE,
-						    OBS_COMBO_FORMAT_STRING);
+	obs_property_t *p = obs_properties_add_list(
+		props, "clone_type", obs_module_text("CloneType"),
+		OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("Source"), CLONE_SOURCE);
+	obs_property_list_add_int(p, obs_module_text("CurrentScene"),
+				  CLONE_CURRENT_SCENE);
+	obs_property_list_add_int(p, obs_module_text("PreviousScene"),
+				  CLONE_PREVIOUS_SCENE);
+
+	obs_property_set_modified_callback2(p, source_clone_type_changed, data);
+
+	p = obs_properties_add_list(props, "clone", obs_module_text("Clone"),
+				    OBS_COMBO_TYPE_EDITABLE,
+				    OBS_COMBO_FORMAT_STRING);
 	obs_enum_sources(source_clone_list_add_source, p);
 	obs_enum_scenes(source_clone_list_add_source, p);
+	obs_property_list_insert_string(p, 0, "", "");
 	//add global audio sources
 	for (uint32_t i = 1; i < 7; i++) {
 		obs_source_t *s = obs_get_output_source(i);
@@ -333,7 +348,7 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 {
 	UNUSED_PARAMETER(effect);
 	struct source_clone *context = data;
-	if (!context->clone)
+	if (context->clone_type == CLONE_SOURCE && !context->clone)
 		return;
 
 	if (context->buffer_frame > 0 && context->processed_frame) {
@@ -500,6 +515,10 @@ void source_clone_deactivate(void *data)
 void source_clone_save(void *data, obs_data_t *settings)
 {
 	struct source_clone *context = data;
+	if (context->clone_type != CLONE_SOURCE) {
+		obs_data_set_string(settings, "clone", "");
+		return;
+	}
 	if (!context->clone)
 		return;
 	obs_source_t *source = obs_weak_source_get_source(context->clone);
@@ -514,6 +533,29 @@ void source_clone_video_tick(void *data, float seconds)
 	UNUSED_PARAMETER(seconds);
 	struct source_clone *context = data;
 	context->processed_frame = false;
+
+	if (context->clone_type == CLONE_CURRENT_SCENE) {
+		obs_source_t *source = obs_frontend_get_current_scene();
+		if (!obs_weak_source_references_source(context->clone,
+						       source)) {
+			source_clone_switch_source(context, source);
+		}
+		obs_source_release(source);
+	} else if (context->clone_type == CLONE_PREVIOUS_SCENE) {
+		obs_source_t *current_scene = obs_frontend_get_current_scene();
+		if (!obs_weak_source_references_source(context->current_scene,
+						       current_scene)) {
+			obs_source_t *source = obs_weak_source_get_source(
+				context->current_scene);
+			source_clone_switch_source(context, source);
+			obs_source_release(source);
+
+			obs_weak_source_release(context->current_scene);
+			context->current_scene =
+				obs_source_get_weak_source(current_scene);
+		}
+		obs_source_release(current_scene);
+	}
 	if (context->buffer_frame > 0) {
 		uint32_t cx = context->buffer_frame;
 		uint32_t cy = context->buffer_frame;
