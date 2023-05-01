@@ -363,15 +363,8 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 		context->rendering = false;
 		return;
 	}
-	const uint32_t source_flags = obs_source_get_output_flags(source);
-	const bool custom_draw = (source_flags & OBS_SOURCE_CUSTOM_DRAW) != 0;
-	const bool async = (source_flags & OBS_SOURCE_ASYNC) != 0;
-	const bool video = (source_flags & OBS_SOURCE_VIDEO) != 0;
 	if (context->buffer_frame == 0) {
-		if (!custom_draw && !async && video)
-			obs_source_default_render(source);
-		else if (video)
-			obs_source_video_render(source);
+		obs_source_video_render(source);
 		obs_source_release(source);
 		context->rendering = false;
 		return;
@@ -408,14 +401,10 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 
 		vec4_zero(&clear_color);
 		gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
-		if (context->source_cx && context->source_cy && video) {
+		if (context->source_cx && context->source_cy) {
 			gs_ortho(0.0f, (float)context->source_cx, 0.0f,
 				 (float)context->source_cy, -100.0f, 100.0f);
-
-			if (!custom_draw && !async)
-				obs_source_default_render(source);
-			else
-				obs_source_video_render(source);
+			obs_source_video_render(source);
 		}
 		gs_texrender_end(context->render);
 
