@@ -17,6 +17,7 @@ static void *source_clone_create(obs_data_t *settings, obs_source_t *source)
 	pthread_mutex_init(&context->audio_mutex, NULL);
 	context->cx = 1;
 	context->cy = 1;
+	obs_source_update(source, NULL);
 	return context;
 }
 
@@ -574,7 +575,6 @@ void source_clone_video_tick(void *data, float seconds)
 	}
 	if (!context->audio_enabled)
 		return;
-
 
 	const audio_t *a = obs_get_audio();
 	const struct audio_output_info *aoi = audio_output_get_info(a);
