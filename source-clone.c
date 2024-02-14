@@ -164,6 +164,7 @@ void source_clone_update(void *data, obs_data_t *settings)
 	bool audio_enabled = obs_data_get_bool(settings, "audio");
 	bool active_clone = obs_data_get_bool(settings, "active_clone");
 	context->clone_type = obs_data_get_int(settings, "clone_type");
+	bool async = true;
 	if (context->clone_type == CLONE_SOURCE) {
 		const char *source_name =
 			obs_data_get_string(settings, "clone");
@@ -173,6 +174,8 @@ void source_clone_update(void *data, obs_data_t *settings)
 			source = NULL;
 		}
 		if (source) {
+			async = (obs_source_get_output_flags(source) &
+				 OBS_SOURCE_ASYNC) != 0;
 			if (!obs_weak_source_references_source(context->clone,
 							       source) ||
 			    context->audio_enabled != audio_enabled ||
@@ -189,6 +192,8 @@ void source_clone_update(void *data, obs_data_t *settings)
 	context->num_channels = audio_output_get_channels(obs_get_audio());
 	context->buffer_frame =
 		(uint8_t)obs_data_get_int(settings, "buffer_frame");
+	context->no_filter = obs_data_get_bool(settings, "no_filters") &&
+			     !async;
 }
 
 void source_clone_defaults(obs_data_t *settings)
@@ -223,6 +228,29 @@ bool source_clone_type_changed(void *priv, obs_properties_t *props,
 	return true;
 }
 
+bool source_clone_source_changed(void *priv, obs_properties_t *props,
+			       obs_property_t *property, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(property);
+	struct source_clone *context = priv;
+	const char *source_name = obs_data_get_string(settings, "clone");
+	bool async = true;
+	obs_source_t *source = obs_get_source_by_name(source_name);
+	if (source == context->source) {
+		obs_source_release(source);
+		source = NULL;
+	}
+	if (source) {
+		async = (obs_source_get_output_flags(source) &
+			 OBS_SOURCE_ASYNC) != 0;
+		obs_source_release(source);
+	}
+
+	obs_property_t *no_filters = obs_properties_get(props, "no_filters");
+	obs_property_set_visible(no_filters, !async);
+	return true;
+}
+
 obs_properties_t *source_clone_properties(void *data)
 {
 	obs_properties_t *props = obs_properties_create();
@@ -251,6 +279,7 @@ obs_properties_t *source_clone_properties(void *data)
 		source_clone_list_add_source(p, s);
 		obs_source_release(s);
 	}
+	obs_property_set_modified_callback2(p, source_clone_source_changed, data);
 	obs_properties_add_bool(props, "audio", obs_module_text("Audio"));
 	p = obs_properties_add_list(props, "buffer_frame",
 				    obs_module_text("VideoBuffer"),
@@ -263,6 +292,9 @@ obs_properties_t *source_clone_properties(void *data)
 
 	obs_properties_add_bool(props, "active_clone",
 				obs_module_text("ActiveClone"));
+
+	obs_properties_add_bool(props, "no_filters",
+				obs_module_text("NoFilters"));
 
 	obs_properties_add_text(
 		props, "plugin_info",
@@ -365,7 +397,11 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 		return;
 	}
 	if (context->buffer_frame == 0) {
-		obs_source_video_render(source);
+		if (context->no_filter) {
+			obs_source_default_render(source);
+		} else {
+			obs_source_video_render(source);
+		}
 		obs_source_release(source);
 		context->rendering = false;
 		return;
@@ -405,7 +441,11 @@ void source_clone_video_render(void *data, gs_effect_t *effect)
 		if (context->source_cx && context->source_cy) {
 			gs_ortho(0.0f, (float)context->source_cx, 0.0f,
 				 (float)context->source_cy, -100.0f, 100.0f);
-			obs_source_video_render(source);
+			if (context->no_filter) {
+				obs_source_default_render(source);
+			} else {
+				obs_source_video_render(source);
+			}
 		}
 		gs_texrender_end(context->render);
 
@@ -430,7 +470,8 @@ uint32_t source_clone_get_width(void *data)
 	obs_source_t *source = obs_weak_source_get_source(context->clone);
 	if (!source)
 		return 1;
-	uint32_t width = obs_source_get_width(source);
+	uint32_t width = context->no_filter ? obs_source_get_base_width(source)
+					    : obs_source_get_width(source);
 	obs_source_release(source);
 	if (context->buffer_frame > 1)
 		width /= context->buffer_frame;
@@ -447,7 +488,9 @@ uint32_t source_clone_get_height(void *data)
 	obs_source_t *source = obs_weak_source_get_source(context->clone);
 	if (!source)
 		return 1;
-	uint32_t height = obs_source_get_height(source);
+	uint32_t height = context->no_filter
+				  ? obs_source_get_base_height(source)
+				  : obs_source_get_height(source);
 	obs_source_release(source);
 	if (context->buffer_frame > 1)
 		height /= context->buffer_frame;
@@ -553,8 +596,15 @@ void source_clone_video_tick(void *data, float seconds)
 			obs_source_t *s =
 				obs_weak_source_get_source(context->clone);
 			if (s) {
-				context->source_cx = obs_source_get_width(s);
-				context->source_cy = obs_source_get_height(s);
+				context->source_cx =
+					context->no_filter
+						? obs_source_get_base_width(s)
+						: obs_source_get_width(s);
+				context->source_cy =
+					context->no_filter
+						? obs_source_get_base_height(s)
+						: obs_source_get_height(s);
+
 				cx = context->source_cx;
 				cy = context->source_cy;
 				obs_source_release(s);
