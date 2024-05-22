@@ -1,7 +1,8 @@
-#include "source-clone.h"
-#include "audio-wrapper.h"
 #include <obs-module.h>
 #include <obs-frontend-api.h>
+#include "util/dstr.h"
+#include "source-clone.h"
+#include "audio-wrapper.h"
 
 const char *source_clone_get_name(void *type_data)
 {
@@ -216,20 +217,68 @@ bool source_clone_list_add_source(void *data, obs_source_t *source)
 	return true;
 }
 
-bool source_clone_type_changed(void *priv, obs_properties_t *props,
-			       obs_property_t *property, obs_data_t *settings)
+struct same_clones {
+	obs_data_t *settings;
+	DARRAY(const char *) clones;
+};
+
+bool find_clones(void *data, obs_source_t *source)
 {
-	UNUSED_PARAMETER(priv);
-	UNUSED_PARAMETER(property);
-	obs_property_t *clone = obs_properties_get(props, "clone");
-	obs_property_set_visible(clone,
-				 obs_data_get_int(settings, "clone_type") ==
-					 CLONE_SOURCE);
+	if (strcmp(obs_source_get_unversioned_id(source), "source-clone") !=
+	    0) {
+
+		return true;
+	}
+	obs_data_t *settings = obs_source_get_settings(source);
+	if (!settings)
+		return true;
+	struct same_clones *sc = data;
+	if (settings == sc->settings) {
+		obs_data_release(settings);
+		return true;
+	}
+	if (obs_data_get_int(sc->settings, "clone_type") == CLONE_SOURCE) {
+		if (obs_data_get_int(settings, "clone_type") == CLONE_SOURCE &&
+		    strcmp(obs_data_get_string(sc->settings, "clone"),
+			   obs_data_get_string(settings, "clone")) == 0) {
+			const char *name = obs_source_get_name(source);
+			da_push_back(sc->clones, &name);
+		}
+	} else if (obs_data_get_int(sc->settings, "clone_type") ==
+		   obs_data_get_int(settings, "clone_type")) {
+		const char *name = obs_source_get_name(source);
+		da_push_back(sc->clones, &name);
+	}
+	obs_data_release(settings);
 	return true;
 }
 
+void find_same_clones(obs_properties_t *props, obs_data_t *settings)
+{
+	struct same_clones sc;
+	sc.settings = settings;
+	da_init(sc.clones);
+	obs_enum_sources(find_clones, &sc);
+	obs_property_t *prop = obs_properties_get(props, "same_clones");
+	if (sc.clones.num) {
+		struct dstr names;
+		dstr_init_copy(&names, sc.clones.array[0]);
+		for (size_t i = 1; i < sc.clones.num; i++) {
+			dstr_cat(&names, "\n");
+			dstr_cat(&names, sc.clones.array[i]);
+		}
+		obs_data_set_string(settings, "same_clones", names.array);
+		dstr_free(&names);
+		obs_property_set_visible(prop, true);
+	} else {
+		obs_data_unset_user_value(settings, "same_clones");
+		obs_property_set_visible(prop, false);
+	}
+	da_free(sc.clones);
+}
+
 bool source_clone_source_changed(void *priv, obs_properties_t *props,
-			       obs_property_t *property, obs_data_t *settings)
+				 obs_property_t *property, obs_data_t *settings)
 {
 	UNUSED_PARAMETER(property);
 	struct source_clone *context = priv;
@@ -248,6 +297,25 @@ bool source_clone_source_changed(void *priv, obs_properties_t *props,
 
 	obs_property_t *no_filters = obs_properties_get(props, "no_filters");
 	obs_property_set_visible(no_filters, !async);
+
+	find_same_clones(props, settings);
+	return true;
+}
+
+bool source_clone_type_changed(void *priv, obs_properties_t *props,
+			       obs_property_t *property, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(priv);
+	UNUSED_PARAMETER(property);
+	obs_property_t *clone = obs_properties_get(props, "clone");
+	const bool clone_source = obs_data_get_int(settings, "clone_type") ==
+				  CLONE_SOURCE;
+	obs_property_set_visible(clone, clone_source);
+	if (clone_source) {
+		source_clone_source_changed(priv, props, NULL, settings);
+	} else {
+		find_same_clones(props, settings);
+	}
 	return true;
 }
 
@@ -279,7 +347,9 @@ obs_properties_t *source_clone_properties(void *data)
 		source_clone_list_add_source(p, s);
 		obs_source_release(s);
 	}
-	obs_property_set_modified_callback2(p, source_clone_source_changed, data);
+	obs_property_set_modified_callback2(p, source_clone_source_changed,
+					    data);
+
 	obs_properties_add_bool(props, "audio", obs_module_text("Audio"));
 	p = obs_properties_add_list(props, "buffer_frame",
 				    obs_module_text("VideoBuffer"),
@@ -295,6 +365,11 @@ obs_properties_t *source_clone_properties(void *data)
 
 	obs_properties_add_bool(props, "no_filters",
 				obs_module_text("NoFilters"));
+
+	p = obs_properties_add_text(props, "same_clones",
+				    obs_module_text("SameClones"),
+				    OBS_TEXT_INFO);
+	obs_property_set_visible(p, false);
 
 	obs_properties_add_text(
 		props, "plugin_info",
