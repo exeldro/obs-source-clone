@@ -143,8 +143,6 @@ void source_clone_update(void *data, obs_data_t *settings)
 	context->clone_type = obs_data_get_int(settings, "clone_type");
 	bool async = true;
 	const char *canvas_name = obs_data_get_string(settings, "canvas");
-
-	obs_source_t *source = NULL;
 	if (canvas_name && strlen(canvas_name)) {
 		obs_canvas_t *canvas = obs_get_canvas_by_name(canvas_name);
 		if (canvas) {
@@ -165,7 +163,6 @@ void source_clone_update(void *data, obs_data_t *settings)
 
 	if (context->clone_type == CLONE_SOURCE) {
 		const char *source_name = obs_data_get_string(settings, "clone");
-
 		obs_source_t *source = NULL;
 		if (context->canvas) {
 			obs_canvas_t *canvas = obs_weak_canvas_get_canvas(context->canvas);
@@ -343,6 +340,8 @@ bool source_clone_type_changed(void *priv, obs_properties_t *props, obs_property
 
 bool source_clone_canvas_changed(void *priv, obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
 {
+	UNUSED_PARAMETER(priv);
+	UNUSED_PARAMETER(property);
 	obs_property_t *clone = obs_properties_get(props, "clone");
 	const char *canvas_name = obs_data_get_string(settings, "canvas");
 	obs_canvas_t *canvas = obs_get_canvas_by_name(canvas_name);
