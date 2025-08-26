@@ -126,14 +126,14 @@ bool audio_wrapper_render(void *data, uint64_t *ts_out,
 			pthread_mutex_lock(&clone->audio_mutex);
 			uint32_t frames = AUDIO_OUTPUT_FRAMES;
 			for (size_t j = 0; j < channels; j++) {
-				circlebuf_push_back(
+				deque_push_back(
 					&clone->audio_data[j],
 					child_audio.output[mix].data[j],
 					frames * sizeof(float));
 			}
-			circlebuf_push_back(&clone->audio_frames, &frames,
+			deque_push_back(&clone->audio_frames, &frames,
 					    sizeof(frames));
-			circlebuf_push_back(&clone->audio_timestamps,
+			deque_push_back(&clone->audio_timestamps,
 					    &timestamp, sizeof(timestamp));
 			pthread_mutex_unlock(&clone->audio_mutex);
 			break;
