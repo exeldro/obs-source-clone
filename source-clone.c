@@ -341,9 +341,10 @@ bool source_clone_type_changed(void *priv, obs_properties_t *props, obs_property
 	return true;
 }
 
-bool source_clone_canvas_changed(void *priv, obs_properties_t *props, obs_property_t *property, obs_data_t *settings) {
+bool source_clone_canvas_changed(void *priv, obs_properties_t *props, obs_property_t *property, obs_data_t *settings)
+{
 	obs_property_t *clone = obs_properties_get(props, "clone");
-	const char* canvas_name = obs_data_get_string(settings, "canvas");
+	const char *canvas_name = obs_data_get_string(settings, "canvas");
 	obs_canvas_t *canvas = obs_get_canvas_by_name(canvas_name);
 	obs_property_list_clear(clone);
 	if (canvas) {
