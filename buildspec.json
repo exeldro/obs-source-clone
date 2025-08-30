@@ -33,7 +33,7 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.exeldro.source-copy"
+            "bundleId": "com.exeldro.source-clone"
         }
     },
     "name": "source-clone",
