@@ -142,6 +142,7 @@ void source_clone_update(void *data, obs_data_t *settings)
 	bool active_clone = obs_data_get_bool(settings, "active_clone");
 	context->clone_type = obs_data_get_int(settings, "clone_type");
 	bool async = true;
+	bool custom_draw = true;
 	const char *canvas_name = obs_data_get_string(settings, "canvas");
 	if (canvas_name && strlen(canvas_name)) {
 		obs_canvas_t *canvas = obs_get_canvas_by_name(canvas_name);
@@ -178,7 +179,9 @@ void source_clone_update(void *data, obs_data_t *settings)
 			source = NULL;
 		}
 		if (source) {
-			async = (obs_source_get_output_flags(source) & OBS_SOURCE_ASYNC) != 0;
+			uint32_t output_flags = obs_source_get_output_flags(source);
+			async = (output_flags & OBS_SOURCE_ASYNC) != 0;
+			custom_draw = (output_flags & OBS_SOURCE_CUSTOM_DRAW) != 0;
 			if (!obs_weak_source_references_source(context->clone, source) ||
 			    context->audio_enabled != audio_enabled || context->active_clone != active_clone) {
 				context->audio_enabled = audio_enabled;
@@ -192,7 +195,7 @@ void source_clone_update(void *data, obs_data_t *settings)
 	context->active_clone = active_clone;
 	context->num_channels = audio_output_get_channels(obs_get_audio());
 	context->buffer_frame = (uint8_t)obs_data_get_int(settings, "buffer_frame");
-	context->no_filter = obs_data_get_bool(settings, "no_filters") && !async;
+	context->no_filter = obs_data_get_bool(settings, "no_filters") && !async && !custom_draw;
 }
 
 void source_clone_defaults(obs_data_t *settings)
@@ -297,6 +300,7 @@ bool source_clone_source_changed(void *priv, obs_properties_t *props, obs_proper
 	const char *canvas_name = obs_data_get_string(settings, "canvas");
 	const char *source_name = obs_data_get_string(settings, "clone");
 	bool async = true;
+	bool custom_draw = true;
 	obs_source_t *source = NULL;
 	if (canvas_name && strlen(canvas_name)) {
 		obs_canvas_t *canvas = obs_get_canvas_by_name(canvas_name);
@@ -312,12 +316,14 @@ bool source_clone_source_changed(void *priv, obs_properties_t *props, obs_proper
 		source = NULL;
 	}
 	if (source) {
-		async = (obs_source_get_output_flags(source) & OBS_SOURCE_ASYNC) != 0;
+		uint32_t output_flags = obs_source_get_output_flags(source);
+		async = (output_flags & OBS_SOURCE_ASYNC) != 0;
+		custom_draw = (output_flags & OBS_SOURCE_CUSTOM_DRAW) != 0;
 		obs_source_release(source);
 	}
 
 	obs_property_t *no_filters = obs_properties_get(props, "no_filters");
-	obs_property_set_visible(no_filters, !async);
+	obs_property_set_visible(no_filters, !async && !custom_draw);
 
 	find_same_clones(props, settings);
 	return true;
