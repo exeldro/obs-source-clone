@@ -10,16 +10,22 @@ const char *source_clone_get_name(void *type_data)
 	return obs_module_text("SourceClone");
 }
 
-static void *source_clone_create(obs_data_t *settings, obs_source_t *source)
+void source_clone_audio_activate(void *data, calldata_t *calldata)
 {
-	UNUSED_PARAMETER(settings);
-	struct source_clone *context = bzalloc(sizeof(struct source_clone));
-	context->source = source;
-	pthread_mutex_init(&context->audio_mutex, NULL);
-	context->cx = 1;
-	context->cy = 1;
-	obs_source_update(source, NULL);
-	return context;
+	struct source_clone *context = data;
+	obs_source_t *source = calldata_ptr(calldata, "source");
+	if (context->audio_enabled && context->clone && obs_weak_source_references_source(context->clone, source)) {
+		obs_source_set_audio_active(context->source, true);
+	}
+}
+
+void source_clone_audio_deactivate(void *data, calldata_t *calldata)
+{
+	struct source_clone *context = data;
+	obs_source_t *source = calldata_ptr(calldata, "source");
+	if (context->clone && obs_weak_source_references_source(context->clone, source)) {
+		obs_source_set_audio_active(context->source, false);
+	}
 }
 
 void source_clone_audio_callback(void *data, obs_source_t *source, const struct audio_data *audio_data, bool muted)
@@ -37,22 +43,43 @@ void source_clone_audio_callback(void *data, obs_source_t *source, const struct 
 	pthread_mutex_unlock(&context->audio_mutex);
 }
 
-void source_clone_audio_activate(void *data, calldata_t *calldata)
-{
+static void source_clone_remove(void *data, calldata_t *cd) {
+	UNUSED_PARAMETER(cd);
 	struct source_clone *context = data;
-	obs_source_t *source = calldata_ptr(calldata, "source");
-	if (context->audio_enabled && context->clone && obs_weak_source_references_source(context->clone, source)) {
-		obs_source_set_audio_active(context->source, true);
+	if (context->audio_wrapper) {
+		audio_wrapper_remove(context->audio_wrapper, context);
+		context->audio_wrapper = NULL;
 	}
+	obs_source_t *source = obs_weak_source_get_source(context->clone);
+	if (source) {
+		signal_handler_t *sh = obs_source_get_signal_handler(source);
+		signal_handler_disconnect(sh, "audio_activate", source_clone_audio_activate, data);
+		signal_handler_disconnect(sh, "audio_deactivate", source_clone_audio_deactivate, data);
+		obs_source_remove_audio_capture_callback(source, source_clone_audio_callback, data);
+		if (obs_source_showing(context->source))
+			obs_source_dec_showing(source);
+		if (context->active_clone && obs_source_active(context->source))
+			obs_source_dec_active(source);
+		obs_source_release(source);
+	}
+	obs_weak_source_release(context->clone);
+	context->clone = NULL;
+	obs_weak_source_release(context->current_scene);
+	context->current_scene = NULL;
 }
 
-void source_clone_audio_deactivate(void *data, calldata_t *calldata)
+static void *source_clone_create(obs_data_t *settings, obs_source_t *source)
 {
-	struct source_clone *context = data;
-	obs_source_t *source = calldata_ptr(calldata, "source");
-	if (context->clone && obs_weak_source_references_source(context->clone, source)) {
-		obs_source_set_audio_active(context->source, false);
-	}
+	UNUSED_PARAMETER(settings);
+	struct source_clone *context = bzalloc(sizeof(struct source_clone));
+	context->source = source;
+	pthread_mutex_init(&context->audio_mutex, NULL);
+	context->cx = 1;
+	context->cy = 1;
+	obs_source_update(source, NULL);
+	signal_handler_t *sh = obs_source_get_signal_handler(source);
+	signal_handler_connect(sh, "remove", source_clone_remove, context);
+	return context;
 }
 
 static void source_clone_destroy(void *data)
