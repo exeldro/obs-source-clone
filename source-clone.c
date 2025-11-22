@@ -43,7 +43,8 @@ void source_clone_audio_callback(void *data, obs_source_t *source, const struct 
 	pthread_mutex_unlock(&context->audio_mutex);
 }
 
-static void source_clone_remove(void *data, calldata_t *cd) {
+static void source_clone_remove(void *data, calldata_t *cd)
+{
 	UNUSED_PARAMETER(cd);
 	struct source_clone *context = data;
 	if (context->audio_wrapper) {
@@ -172,18 +173,20 @@ void source_clone_update(void *data, obs_data_t *settings)
 	bool custom_draw = true;
 	const char *canvas_name = obs_data_get_string(settings, "canvas");
 	if (canvas_name && strlen(canvas_name)) {
-		obs_canvas_t *canvas = obs_get_canvas_by_name(canvas_name);
-		if (canvas) {
-			if (!obs_weak_object_references_object((obs_weak_object_t *)context->canvas,
-							       (obs_object_t *)canvas)) {
-				obs_weak_canvas_release(context->canvas);
-				context->canvas = obs_canvas_get_weak_canvas(canvas);
+		obs_canvas_t *canvas = NULL;
+		if (context->canvas) {
+			canvas = obs_weak_canvas_get_canvas(context->canvas);
+			if (canvas && strcmp(obs_canvas_get_name(canvas), canvas_name) != 0) {
+				obs_canvas_release(canvas);
+				canvas = NULL;
 			}
-			obs_canvas_release(canvas);
-		} else if (context->canvas) {
-			obs_weak_canvas_release(context->canvas);
-			context->canvas = NULL;
 		}
+		if (!canvas) {
+			canvas = obs_get_canvas_by_name(canvas_name);
+			obs_weak_canvas_release(context->canvas);
+			context->canvas = canvas ? obs_canvas_get_weak_canvas(canvas) : NULL;
+		}
+		obs_canvas_release(canvas);
 	} else if (context->canvas) {
 		obs_weak_canvas_release(context->canvas);
 		context->canvas = NULL;
@@ -384,15 +387,15 @@ bool source_clone_canvas_changed(void *priv, obs_properties_t *props, obs_proper
 		obs_canvas_release(canvas);
 	} else {
 		obs_enum_scenes(source_clone_list_add_source, clone);
-		obs_enum_sources(source_clone_list_add_source, clone);
-		//add global audio sources
-		for (uint32_t i = 1; i < 7; i++) {
-			obs_source_t *s = obs_get_output_source(i);
-			if (!s)
-				continue;
-			source_clone_list_add_source(clone, s);
-			obs_source_release(s);
-		}
+	}
+	obs_enum_sources(source_clone_list_add_source, clone);
+	//add global audio sources
+	for (uint32_t i = 1; i < 7; i++) {
+		obs_source_t *s = obs_get_output_source(i);
+		if (!s)
+			continue;
+		source_clone_list_add_source(clone, s);
+		obs_source_release(s);
 	}
 	obs_property_list_insert_string(0, 0, "", "");
 	return true;
