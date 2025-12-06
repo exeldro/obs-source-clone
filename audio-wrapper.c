@@ -23,6 +23,7 @@ struct audio_wrapper_info *audio_wrapper_get(bool create)
 	obs_source_t *aws = obs_source_create_private(
 		audio_wrapper_source.id, audio_wrapper_source.id, NULL);
 	struct audio_wrapper_info *aw = obs_obj_get_data(aws);
+	obs_source_set_muted(aws, true);
 
 	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
 		obs_source_t *source = obs_get_output_source(i);
