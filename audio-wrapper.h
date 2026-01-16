@@ -16,3 +16,5 @@ void audio_wrapper_remove(struct audio_wrapper_info *audio_wrapper,
 
 void audio_wrapper_add(struct audio_wrapper_info *audio_wrapper,
 		       struct source_clone *clone);
+
+void audio_wrapper_cleanup();

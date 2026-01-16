@@ -231,7 +231,7 @@ void source_clone_update(void *data, obs_data_t *settings)
 void source_clone_defaults(obs_data_t *settings)
 {
 	UNUSED_PARAMETER(settings);
-	obs_data_set_default_bool(settings, "audio", true);
+	obs_data_set_default_bool(settings, "audio", false);
 }
 
 bool source_clone_list_add_source(void *data, obs_source_t *source)
@@ -716,11 +716,13 @@ void source_clone_video_tick(void *data, float seconds)
 			obs_canvas_t *canvas = obs_weak_canvas_get_canvas(context->canvas);
 			if (canvas) {
 				source = obs_canvas_get_channel(canvas, 0);
-				if (source && obs_source_get_type(source) == OBS_SOURCE_TYPE_TRANSITION) {
+				while (source && obs_source_get_type(source) == OBS_SOURCE_TYPE_TRANSITION) {
 					obs_source_t *ts = obs_transition_get_active_source(source);
 					if (ts) {
 						obs_source_release(source);
 						source = ts;
+					} else {
+						break;
 					}
 				}
 				obs_canvas_release(canvas);
@@ -833,10 +835,24 @@ MODULE_EXPORT const char *obs_module_name(void)
 	return obs_module_text("SourceClone");
 }
 
+void audio_wrapper_frontend_event(enum obs_frontend_event event, void *private_data) {
+	UNUSED_PARAMETER(private_data);
+	if (event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN || event == OBS_FRONTEND_EVENT_EXIT) {
+		audio_wrapper_cleanup();
+	}
+}
+
 bool obs_module_load(void)
 {
 	blog(LOG_INFO, "[Source Clone] loaded version %s", PROJECT_VERSION);
 	obs_register_source(&source_clone_info);
 	obs_register_source(&audio_wrapper_source);
+	obs_frontend_add_event_callback(audio_wrapper_frontend_event, NULL);
 	return true;
+}
+
+void obs_module_unload(void)
+{
+	audio_wrapper_cleanup();
+	obs_frontend_remove_event_callback(audio_wrapper_frontend_event, NULL);
 }

@@ -8,10 +8,8 @@ struct audio_wrapper_info *audio_wrapper_get(bool create)
 		obs_source_t *source = obs_get_output_source(i);
 		if (!source)
 			continue;
-		if (strcmp(obs_source_get_unversioned_id(source),
-			   audio_wrapper_source.id) == 0) {
-			struct audio_wrapper_info *aw =
-				obs_obj_get_data(source);
+		if (strcmp(obs_source_get_unversioned_id(source), audio_wrapper_source.id) == 0) {
+			struct audio_wrapper_info *aw = obs_obj_get_data(source);
 			aw->channel = i;
 			obs_source_release(source);
 			return aw;
@@ -20,8 +18,7 @@ struct audio_wrapper_info *audio_wrapper_get(bool create)
 	}
 	if (!create)
 		return NULL;
-	obs_source_t *aws = obs_source_create_private(
-		audio_wrapper_source.id, audio_wrapper_source.id, NULL);
+	obs_source_t *aws = obs_source_create_private(audio_wrapper_source.id, audio_wrapper_source.id, NULL);
 	struct audio_wrapper_info *aw = obs_obj_get_data(aws);
 	obs_source_set_muted(aws, true);
 
@@ -40,34 +37,32 @@ struct audio_wrapper_info *audio_wrapper_get(bool create)
 	return NULL;
 }
 
-void audio_wrapper_remove(struct audio_wrapper_info *audio_wrapper,
-			  struct source_clone *clone)
+void audio_wrapper_remove(struct audio_wrapper_info *audio_wrapper, struct source_clone *clone)
 {
 	da_erase_item(audio_wrapper->clones, &clone);
 	if (audio_wrapper->clones.num)
 		return;
 	obs_source_t *s = obs_get_output_source(audio_wrapper->channel);
 	if (s) {
+		obs_source_release(s);
 		if (s == audio_wrapper->source) {
 			obs_set_output_source(audio_wrapper->channel, NULL);
 			return;
 		}
-		obs_source_release(s);
 	}
 	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
 		obs_source_t *source = obs_get_output_source(i);
 		if (!source)
 			continue;
+		obs_source_release(source);
 		if (source == audio_wrapper->source) {
 			obs_set_output_source(audio_wrapper->channel, NULL);
 			return;
 		}
-		obs_source_release(source);
 	}
 }
 
-void audio_wrapper_add(struct audio_wrapper_info *audio_wrapper,
-		       struct source_clone *clone)
+void audio_wrapper_add(struct audio_wrapper_info *audio_wrapper, struct source_clone *clone)
 {
 	da_push_back(audio_wrapper->clones, &clone);
 }
@@ -81,8 +76,7 @@ const char *audio_wrapper_get_name(void *type_data)
 void *audio_wrapper_create(obs_data_t *settings, obs_source_t *source)
 {
 	UNUSED_PARAMETER(settings);
-	struct audio_wrapper_info *audio_wrapper =
-		bzalloc(sizeof(struct audio_wrapper_info));
+	struct audio_wrapper_info *audio_wrapper = bzalloc(sizeof(struct audio_wrapper_info));
 	audio_wrapper->source = source;
 	return audio_wrapper;
 }
@@ -99,8 +93,7 @@ void audio_wrapper_destroy(void *data)
 	bfree(data);
 }
 
-bool audio_wrapper_render(void *data, uint64_t *ts_out,
-			  struct obs_source_audio_mix *audio, uint32_t mixers,
+bool audio_wrapper_render(void *data, uint64_t *ts_out, struct obs_source_audio_mix *audio, uint32_t mixers,
 			  size_t channels, size_t sample_rate)
 {
 	UNUSED_PARAMETER(ts_out);
@@ -127,15 +120,11 @@ bool audio_wrapper_render(void *data, uint64_t *ts_out,
 			pthread_mutex_lock(&clone->audio_mutex);
 			uint32_t frames = AUDIO_OUTPUT_FRAMES;
 			for (size_t j = 0; j < channels; j++) {
-				deque_push_back(
-					&clone->audio_data[j],
-					child_audio.output[mix].data[j],
-					frames * sizeof(float));
+				deque_push_back(&clone->audio_data[j], child_audio.output[mix].data[j],
+						frames * sizeof(float));
 			}
-			deque_push_back(&clone->audio_frames, &frames,
-					    sizeof(frames));
-			deque_push_back(&clone->audio_timestamps,
-					    &timestamp, sizeof(timestamp));
+			deque_push_back(&clone->audio_frames, &frames, sizeof(frames));
+			deque_push_back(&clone->audio_timestamps, &timestamp, sizeof(timestamp));
 			pthread_mutex_unlock(&clone->audio_mutex);
 			break;
 		}
@@ -144,9 +133,7 @@ bool audio_wrapper_render(void *data, uint64_t *ts_out,
 	return false;
 }
 
-static void audio_wrapper_enum_sources(void *data,
-				       obs_source_enum_proc_t enum_callback,
-				       void *param, bool active)
+static void audio_wrapper_enum_sources(void *data, obs_source_enum_proc_t enum_callback, void *param, bool active)
 {
 	UNUSED_PARAMETER(active);
 	struct audio_wrapper_info *aw = (struct audio_wrapper_info *)data;
@@ -162,18 +149,45 @@ static void audio_wrapper_enum_sources(void *data,
 	}
 }
 
-void audio_wrapper_enum_active_sources(void *data,
-				       obs_source_enum_proc_t enum_callback,
-				       void *param)
+void audio_wrapper_enum_active_sources(void *data, obs_source_enum_proc_t enum_callback, void *param)
 {
 	audio_wrapper_enum_sources(data, enum_callback, param, true);
 }
 
-void audio_wrapper_enum_all_sources(void *data,
-				    obs_source_enum_proc_t enum_callback,
-				    void *param)
+void audio_wrapper_enum_all_sources(void *data, obs_source_enum_proc_t enum_callback, void *param)
 {
 	audio_wrapper_enum_sources(data, enum_callback, param, false);
+}
+
+void audio_wrapper_cleanup()
+{
+	struct audio_wrapper_info *aw = audio_wrapper_get(false);
+	if (!aw)
+		return;
+	for (size_t i = 0; i < aw->clones.num; i++) {
+		struct source_clone *clone = aw->clones.array[i];
+		if (clone->audio_wrapper == aw)
+			clone->audio_wrapper = NULL;
+	}
+	aw->clones.num = 0;
+	obs_source_t *s = obs_get_output_source(aw->channel);
+	if (s) {
+		obs_source_release(s);
+		if (s == aw->source) {
+			obs_set_output_source(aw->channel, NULL);
+			return;
+		}
+	}
+	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
+		obs_source_t *source = obs_get_output_source(i);
+		if (!source)
+			continue;
+		obs_source_release(source);
+		if (source == aw->source) {
+			obs_set_output_source(aw->channel, NULL);
+			return;
+		}
+	}
 }
 
 struct obs_source_info audio_wrapper_source = {
