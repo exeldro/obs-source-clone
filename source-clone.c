@@ -807,7 +807,6 @@ struct obs_source_info source_clone_info = {
 	.get_name = source_clone_get_name,
 	.create = source_clone_create,
 	.destroy = source_clone_destroy,
-	.load = source_clone_update,
 	.update = source_clone_update,
 	.save = source_clone_save,
 	.video_render = source_clone_video_render,

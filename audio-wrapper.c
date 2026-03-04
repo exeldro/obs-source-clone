@@ -4,8 +4,13 @@
 
 struct audio_wrapper_info *audio_wrapper_get(bool create)
 {
+	obs_canvas_t *canvas = obs_get_main_canvas();
+	if (!canvas)
+		return NULL;
+	obs_canvas_release(canvas);
+
 	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
-		obs_source_t *source = obs_get_output_source(i);
+		obs_source_t *source = obs_canvas_get_channel(canvas, i);
 		if (!source)
 			continue;
 		if (strcmp(obs_source_get_unversioned_id(source), audio_wrapper_source.id) == 0) {
@@ -23,12 +28,12 @@ struct audio_wrapper_info *audio_wrapper_get(bool create)
 	obs_source_set_muted(aws, true);
 
 	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
-		obs_source_t *source = obs_get_output_source(i);
+		obs_source_t *source = obs_canvas_get_channel(canvas, i);
 		if (source) {
 			obs_source_release(source);
 			continue;
 		}
-		obs_set_output_source(i, aws);
+		obs_canvas_set_channel(canvas, i, aws);
 		aw->channel = i;
 		obs_source_release(aws);
 		return aw;
@@ -42,24 +47,32 @@ void audio_wrapper_remove(struct audio_wrapper_info *audio_wrapper, struct sourc
 	da_erase_item(audio_wrapper->clones, &clone);
 	if (audio_wrapper->clones.num)
 		return;
-	obs_source_t *s = obs_get_output_source(audio_wrapper->channel);
+
+	obs_canvas_t *canvas = obs_get_main_canvas();
+	if (!canvas)
+		return;
+
+	obs_source_t *s = obs_canvas_get_channel(canvas, audio_wrapper->channel);
 	if (s) {
 		obs_source_release(s);
 		if (s == audio_wrapper->source) {
-			obs_set_output_source(audio_wrapper->channel, NULL);
+			obs_canvas_set_channel(canvas, audio_wrapper->channel, NULL);
+			obs_canvas_release(canvas);
 			return;
 		}
 	}
 	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
-		obs_source_t *source = obs_get_output_source(i);
+		obs_source_t *source = obs_canvas_get_channel(canvas, i);
 		if (!source)
 			continue;
 		obs_source_release(source);
 		if (source == audio_wrapper->source) {
-			obs_set_output_source(audio_wrapper->channel, NULL);
+			obs_canvas_set_channel(canvas, audio_wrapper->channel, NULL);
+			obs_canvas_release(canvas);
 			return;
 		}
 	}
+	obs_canvas_release(canvas);
 }
 
 void audio_wrapper_add(struct audio_wrapper_info *audio_wrapper, struct source_clone *clone)
@@ -170,24 +183,31 @@ void audio_wrapper_cleanup()
 			clone->audio_wrapper = NULL;
 	}
 	aw->clones.num = 0;
-	obs_source_t *s = obs_get_output_source(aw->channel);
+
+	obs_canvas_t *canvas = obs_get_main_canvas();
+	if (!canvas)
+		return;
+	obs_source_t *s = obs_canvas_get_channel(canvas, aw->channel);
 	if (s) {
 		obs_source_release(s);
 		if (s == aw->source) {
-			obs_set_output_source(aw->channel, NULL);
+			obs_canvas_set_channel(canvas, aw->channel, NULL);
+			obs_canvas_release(canvas);
 			return;
 		}
 	}
 	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
-		obs_source_t *source = obs_get_output_source(i);
+		obs_source_t *source = obs_canvas_get_channel(canvas, i);
 		if (!source)
 			continue;
 		obs_source_release(source);
 		if (source == aw->source) {
-			obs_set_output_source(aw->channel, NULL);
+			obs_canvas_set_channel(canvas, aw->channel, NULL);
+			obs_canvas_release(canvas);
 			return;
 		}
 	}
+	obs_canvas_release(canvas);
 }
 
 struct obs_source_info audio_wrapper_source = {
