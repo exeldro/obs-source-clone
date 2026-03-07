@@ -148,7 +148,6 @@ bool audio_wrapper_render(void *data, uint64_t *ts_out, struct obs_source_audio_
 
 static void audio_wrapper_enum_sources(void *data, obs_source_enum_proc_t enum_callback, void *param, bool active)
 {
-	UNUSED_PARAMETER(active);
 	struct audio_wrapper_info *aw = (struct audio_wrapper_info *)data;
 	for (size_t i = 0; i < aw->clones.num; i++) {
 		struct source_clone *clone = aw->clones.array[i];
@@ -156,7 +155,8 @@ static void audio_wrapper_enum_sources(void *data, obs_source_enum_proc_t enum_c
 		if (!source)
 			continue;
 
-		enum_callback(aw->source, source, param);
+		if (!active || !obs_source_active(source))
+			enum_callback(aw->source, source, param);
 
 		obs_source_release(source);
 	}
