@@ -213,16 +213,27 @@ void source_clone_update(void *data, obs_data_t *settings)
 			async = (output_flags & OBS_SOURCE_ASYNC) != 0;
 			custom_draw = (output_flags & OBS_SOURCE_CUSTOM_DRAW) != 0;
 			if (!obs_weak_source_references_source(context->clone, source) ||
-			    context->audio_enabled != audio_enabled || context->active_clone != active_clone) {
+			    context->audio_enabled != audio_enabled) {
 				context->audio_enabled = audio_enabled;
-				context->active_clone = active_clone;
 				source_clone_switch_source(context, source);
 			}
 			obs_source_release(source);
 		}
 	}
 	context->audio_enabled = audio_enabled;
-	context->active_clone = active_clone;
+	if (active_clone != context->active_clone) {
+		if (obs_source_active(context->source)) {
+			obs_source_t *clone = obs_weak_source_get_source(context->clone);
+			if (clone) {
+				if (active_clone)
+					obs_source_inc_active(clone);
+				else
+					obs_source_dec_active(clone);
+				obs_source_release(clone);
+			}
+		}
+		context->active_clone = active_clone;
+	}
 	context->num_channels = audio_output_get_channels(obs_get_audio());
 	context->buffer_frame = (uint8_t)obs_data_get_int(settings, "buffer_frame");
 	context->no_filter = obs_data_get_bool(settings, "no_filters") && !async && !custom_draw;
@@ -834,7 +845,8 @@ MODULE_EXPORT const char *obs_module_name(void)
 	return obs_module_text("SourceClone");
 }
 
-void audio_wrapper_frontend_event(enum obs_frontend_event event, void *private_data) {
+void audio_wrapper_frontend_event(enum obs_frontend_event event, void *private_data)
+{
 	UNUSED_PARAMETER(private_data);
 	if (event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN || event == OBS_FRONTEND_EVENT_EXIT) {
 		audio_wrapper_cleanup();

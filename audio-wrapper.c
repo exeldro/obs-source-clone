@@ -155,7 +155,12 @@ static void audio_wrapper_enum_sources(void *data, obs_source_enum_proc_t enum_c
 		if (!source)
 			continue;
 
-		if (!active || !obs_source_active(source))
+		if (obs_source_removed(source)) {
+			obs_source_release(source);
+			continue;
+		}
+
+		if (!active || clone->active_clone || !obs_source_active(source))
 			enum_callback(aw->source, source, param);
 
 		obs_source_release(source);
