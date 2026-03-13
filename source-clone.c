@@ -163,6 +163,12 @@ void source_clone_switch_source(struct source_clone *context, obs_source_t *sour
 		obs_source_inc_active(source);
 }
 
+void source_clone_load(void *data, obs_data_t *settings)
+{
+	struct source_clone *context = data;
+	obs_source_update(context->source, settings);
+}
+
 void source_clone_update(void *data, obs_data_t *settings)
 {
 	struct source_clone *context = data;
@@ -819,6 +825,7 @@ struct obs_source_info source_clone_info = {
 	.create = source_clone_create,
 	.destroy = source_clone_destroy,
 	.update = source_clone_update,
+	.load = source_clone_load,
 	.save = source_clone_save,
 	.video_render = source_clone_video_render,
 	.get_width = source_clone_get_width,
